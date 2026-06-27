@@ -39,6 +39,12 @@ class CertAssessment(BaseModel):
     llm_used: bool = False
     alert_ticket: str | None = None
 
+    # Carried through from CertSignals for UI display.
+    expires_at: str = ""
+    ci_name: str = ""
+    owner_team: str = ""
+    sans: list[str] = []
+
 
 class CertAgentResult(BaseModel):
     certs_scanned: int

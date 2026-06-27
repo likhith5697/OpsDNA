@@ -67,3 +67,102 @@ def get_pods(service_name: str | None) -> dict:
         return {"healthy": None, "pods": [], "error": "kubectl not found"}
     except Exception as exc:
         return {"healthy": None, "pods": [], "error": str(exc)}
+
+
+def _kubectl_json(args: list[str]) -> dict:
+    """Run a kubectl command and parse its JSON output. Returns {"error": ...} on failure."""
+    try:
+        result = subprocess.run(["kubectl", *args, "-o", "json"], capture_output=True, text=True, timeout=10)
+        if result.returncode != 0:
+            return {"error": result.stderr.strip()}
+        return json.loads(result.stdout)
+    except FileNotFoundError:
+        return {"error": "kubectl not found"}
+    except Exception as exc:
+        return {"error": str(exc)}
+
+
+def get_pods_in_namespace(namespace: str = "checkout-service") -> dict:
+    """List all pods in a namespace with status/restarts/age. Used by the SRE ask-tool layer.
+
+    Includes status_reason -- the container waiting/lastState-terminated
+    reason (e.g. "CrashLoopBackOff", "ImagePullBackOff", "OOMKilled"). Pod
+    `phase` alone is misleading for crash loops: Kubernetes reports phase as
+    "Running" even mid-crash-loop, since the container has started at least
+    once -- status_reason is the real signal.
+    """
+    data = _kubectl_json(["get", "pods", "-n", namespace])
+    if "error" in data:
+        return {"namespace": namespace, "pods": [], "error": data["error"]}
+
+    pods = []
+    for item in data.get("items", []):
+        statuses = item.get("status", {}).get("containerStatuses", [])
+        reason = None
+        for cs in statuses:
+            waiting = cs.get("state", {}).get("waiting")
+            if waiting:
+                reason = waiting.get("reason")
+                break
+            terminated = cs.get("lastState", {}).get("terminated")
+            if terminated and not reason:
+                reason = terminated.get("reason")
+        pods.append(
+            {
+                "name": item["metadata"]["name"],
+                "phase": item.get("status", {}).get("phase", "Unknown"),
+                "ready": f"{sum(1 for cs in statuses if cs.get('ready'))}/{len(statuses)}",
+                "restarts": sum(cs.get("restartCount", 0) for cs in statuses),
+                "age": item["metadata"].get("creationTimestamp", ""),
+                "status_reason": reason,
+            }
+        )
+    return {"namespace": namespace, "pods": pods}
+
+
+def get_pod_termination_detail(pod_name: str, namespace: str = "checkout-service") -> dict:
+    """Fetch the last termination reason/exitCode/message for a pod's container(s).
+
+    Used by Tier-1 remediation to ground the LLM's root-cause guess in the
+    real exit reason (e.g. "Error" exitCode=1 vs "OOMKilled") rather than
+    just the umbrella status_reason ("CrashLoopBackOff") -- otherwise the
+    model has no way to distinguish a config/command problem from an actual
+    memory issue.
+    """
+    data = _kubectl_json(["get", "pod", pod_name, "-n", namespace])
+    if "error" in data:
+        return {"error": data["error"]}
+
+    statuses = data.get("status", {}).get("containerStatuses", [])
+    details = []
+    for cs in statuses:
+        terminated = cs.get("lastState", {}).get("terminated") or cs.get("state", {}).get("terminated")
+        if terminated:
+            details.append(
+                {
+                    "container": cs.get("name", ""),
+                    "reason": terminated.get("reason", ""),
+                    "exit_code": terminated.get("exitCode"),
+                    "message": terminated.get("message", ""),
+                }
+            )
+    return {"containers": details}
+
+
+def get_deployments_in_namespace(namespace: str = "checkout-service") -> dict:
+    """List all deployments in a namespace with replica status. Used by the SRE ask-tool layer."""
+    data = _kubectl_json(["get", "deployments", "-n", namespace])
+    if "error" in data:
+        return {"namespace": namespace, "deployments": [], "error": data["error"]}
+
+    deployments = [
+        {
+            "name": item["metadata"]["name"],
+            "ready_replicas": item.get("status", {}).get("readyReplicas", 0),
+            "replicas": item.get("status", {}).get("replicas", 0),
+            "updated_replicas": item.get("status", {}).get("updatedReplicas", 0),
+            "available_replicas": item.get("status", {}).get("availableReplicas", 0),
+        }
+        for item in data.get("items", [])
+    ]
+    return {"namespace": namespace, "deployments": deployments}

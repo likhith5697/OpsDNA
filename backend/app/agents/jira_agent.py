@@ -148,11 +148,19 @@ def _rule_based_risk(signals: TicketSignals) -> TicketRisk:
 
     return TicketRisk(
         key=signals.key,
+        service_name=signals.service_name,
         risk_level=risk_level,
         reasons=reasons or ["No risk signals detected"],
         recommendation=recommendation,
         causing_live_impact=causing_live_impact,
         llm_used=False,
+        summary=signals.summary,
+        status=signals.status,
+        days_open=signals.days_open,
+        is_unassigned=signals.is_unassigned,
+        is_blocked=signals.is_blocked,
+        open_snow_incidents=signals.open_snow_incidents,
+        error_rate=signals.error_rate,
     )
 
 
@@ -189,7 +197,25 @@ def run_llm_risk_reasoning(signals_list: list[TicketSignals]) -> list[TicketRisk
             ],
         )
         parsed = json.loads(response.choices[0].message.content)
-        return [TicketRisk(**t, llm_used=True) for t in parsed["tickets"]]
+        signals_by_key = {s.key: s for s in signals_list}
+        results = []
+        for t in parsed["tickets"]:
+            s = signals_by_key.get(t["key"])
+            results.append(
+                TicketRisk(
+                    **t,
+                    service_name=s.service_name if s else None,
+                    llm_used=True,
+                    summary=s.summary if s else "",
+                    status=s.status if s else "",
+                    days_open=s.days_open if s else 0,
+                    is_unassigned=s.is_unassigned if s else False,
+                    is_blocked=s.is_blocked if s else False,
+                    open_snow_incidents=s.open_snow_incidents if s else [],
+                    error_rate=s.error_rate if s else 0.0,
+                )
+            )
+        return results
     except Exception as exc:
         print(f"OpenAI call failed: {exc}")
         return [_rule_based_risk(s) for s in signals_list]

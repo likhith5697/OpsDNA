@@ -30,5 +30,17 @@ class Settings(BaseSettings):
     github_owner: str | None = None
     github_repo: str = "checkout-service"
 
+    grafana_cloud_prom_url: str = "https://prometheus-prod-66-prod-us-east-3.grafana.net/api/prom"
+    grafana_cloud_username: str | None = None
+    grafana_cloud_api_key: str | None = None
+
+    grafana_loki_url: str | None = None
+    grafana_loki_username: str | None = None
+
+    # SRE agent incident-detection thresholds for checkout-service.
+    sre_error_rate_threshold: float = 5.0
+    sre_p99_latency_threshold: float = 2000.0
+    sre_order_success_threshold: float = 95.0
+
 
 settings = Settings()

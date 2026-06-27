@@ -33,11 +33,21 @@ class TicketRisk(BaseModel):
     """LLM (or rule-based fallback) verdict for one ticket."""
 
     key: str
+    service_name: str | None = None
     risk_level: RiskLevel
     reasons: list[str]
     recommendation: Recommendation
     causing_live_impact: bool = False
     llm_used: bool = False
+
+    # Carried through from TicketSignals for UI display (not used in risk reasoning itself).
+    summary: str = ""
+    status: str = ""
+    days_open: int = 0
+    is_unassigned: bool = False
+    is_blocked: bool = False
+    open_snow_incidents: list[dict] = []
+    error_rate: float = 0.0
 
 
 class ActionTaken(BaseModel):

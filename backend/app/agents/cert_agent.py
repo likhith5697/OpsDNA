@@ -98,6 +98,10 @@ def _rule_based_assessment(signals: CertSignals) -> CertAssessment:
         recommended_action="Monitor auto-renewal" if signals.auto_renewal else "Renew certificate manually",
         notify=signals.owner_team,
         llm_used=False,
+        expires_at=signals.expires_at,
+        ci_name=signals.ci_name,
+        owner_team=signals.owner_team,
+        sans=signals.sans,
     )
 
 
@@ -157,6 +161,10 @@ def run_llm_reasoning(signals_list: list[CertSignals]) -> list[CertAssessment]:
                     recommended_action=verdict.get("recommended_action", ""),
                     notify=verdict.get("notify", signals.owner_team),
                     llm_used=True,
+                    expires_at=signals.expires_at,
+                    ci_name=signals.ci_name,
+                    owner_team=signals.owner_team,
+                    sans=signals.sans,
                 )
             )
         return results

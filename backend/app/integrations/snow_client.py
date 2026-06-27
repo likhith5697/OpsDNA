@@ -10,9 +10,25 @@ fixed choice list and silently coerces unknown values (e.g. "certificate") to
 the default choice, so it can't be used to identify these records reliably.
 """
 
+import re
+
 import httpx
 
 from app.core.config import settings
+
+# Maps the canonical issue_type categories (see app.agents.sre_agent's pod
+# symptom -> issue_type detection) to a substring guaranteed to appear in the
+# real SOP article's short_description in the SNOW KB. Plain "SOP-K8S-00N"
+# numbers are NOT used as the search term because this instance has a
+# duplicate/colliding "SOP-K8S-002: Node Resource Exhaustion" article.
+_SOP_SEARCH_TERMS = {
+    "CrashLoopBackOff": "CrashLoopBackOff",
+    "High Error Rate": "HTTP Error Rate",
+    "High Latency": "Latency",
+    "Deployment Failure": "Deployment Rollout",
+    "Config Drift": "Drift",
+    "Service Unavailable": "Service Unavailable",
+}
 
 
 def _configured() -> bool:
@@ -136,6 +152,49 @@ async def check_duplicate_alert_ticket(cert_name: str) -> bool:
 async def create_certificate_record(fields: dict) -> dict:
     """Create a certificate inventory record."""
     return await _create(fields)
+
+
+async def create_incident(fields: dict) -> dict:
+    """Create a SNOW incident with arbitrary fields. Returns {} on failure."""
+    return await _create(fields)
+
+
+async def fetch_sop(issue_type: str) -> dict | None:
+    """Fetch the published SNOW KB SOP article matching this issue type.
+
+    issue_type must be one of the 6 canonical categories in _SOP_SEARCH_TERMS
+    (CrashLoopBackOff, High Error Rate, High Latency, Deployment Failure,
+    Config Drift, Service Unavailable). Returns None if not configured, no
+    matching article exists, or on failure -- callers must degrade gracefully
+    (e.g. propose "escalate_no_safe_fix" rather than guessing a fix).
+    """
+    search_term = _SOP_SEARCH_TERMS.get(issue_type)
+    if not search_term:
+        return None
+
+    results = await _get(
+        "/api/now/table/kb_knowledge",
+        {
+            "sysparm_query": f"short_descriptionLIKE{search_term}^workflow_state=published^active=true",
+            "sysparm_fields": "number,short_description,text",
+            "sysparm_limit": "1",
+        },
+    )
+    if not results:
+        return None
+
+    article = results[0]
+    body = re.sub(r"<[^>]+>", " ", article.get("text", ""))
+    body = re.sub(r"\s+", " ", body).strip()
+
+    sop_number_match = re.search(r"SOP-K8S-\d+", article.get("short_description", ""))
+
+    return {
+        "kb_number": article.get("number", ""),
+        "sop_number": sop_number_match.group(0) if sop_number_match else "",
+        "title": article.get("short_description", ""),
+        "text": body,
+    }
 
 
 async def create_certificate_alert(short_description: str, description: str, urgency: str, impact: str, assignment_group: str) -> dict:
